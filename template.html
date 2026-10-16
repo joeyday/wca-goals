@@ -25,20 +25,23 @@
   .legend { margin:.5rem 0 0; } abbr { text-decoration:none; cursor:help; margin-left:.1rem; }
   #tip { margin:0; max-width:min(22rem, calc(100vw - 2rem)); padding:.5rem .75rem; border:1px solid var(--line); border-radius:.5rem;
          background:var(--bg); color:var(--fg); font-size:.9rem; white-space:pre-line; box-shadow:0 4px 16px rgb(0 0 0 / .2); }
-  td.r.plan::before { content:"●"; color:var(--plan); }
+  /* A plus rather than a dot, so "not yet counted" never relies on telling yellow from green. */
+  td.r.plan::before, .plus { content:""; display:inline-block; width:.95em; height:.95em; vertical-align:-.12em;
+    background: linear-gradient(var(--plan), var(--plan)) center / 100% 30% no-repeat,
+                linear-gradient(var(--plan), var(--plan)) center / 30% 100% no-repeat; }
   td.r.on, td.r.plan, abbr { cursor:pointer; }
 </style>
 </head>
 <body>
 <h1>Regionals Goals</h1>
-<p class="sub">Progress toward all nine CubingUSA regional championships, as competitor and as listed delegate. Each distinct region is a point. In 2023 the Northeast region split into New England and Mid-Atlantic, and the original Western region split into Western and Rocky Mountain; choose how those older championships count below. {{count}} championships tracked. Updated {{updated}}.</p>
+<p class="sub">Progress toward all nine CubingUSA regional championships, as a competitor, a listed delegate and a listed organizer. Each distinct region is a point. In 2023 the Northeast region split into New England and Mid-Atlantic, and the original Western region split into Western and Rocky Mountain; choose how those older championships count below. {{count}} championships tracked. Updated {{updated}}.</p>
 <div class="toggles">
   <label class="toggle"><input type="checkbox" id="variants" checked> Include Quiet/PBQ &amp; FMC championships</label>
   <label class="toggle"><input type="checkbox" id="hypo"> Hypothetical: count registered/listed upcoming championships</label>
   <label class="toggle">Legacy regions: <select id="legacy">{{options}}</select></label>
 </div>
 {{hints}}
-<p class="sub legend"><b>*</b> counts a region only through a pre-2023 Northeast/Western championship &nbsp;·&nbsp; <b>†</b> counts a region only through a Quiet/PBQ/FMC championship (no main championship there). A <span style="color:var(--plan)">●</span> yellow dot means a new region from an upcoming or ongoing championship, where you are registered or listed as delegate or organizer. It counts only when the hypothetical checkbox is on, and turns green once the championship is over. Hover or tap a dot to see the championships.</p>
+<p class="sub legend"><b>*</b> counts a region only through a pre-2023 Northeast/Western championship &nbsp;·&nbsp; <b>†</b> counts a region only through a Quiet/PBQ/FMC championship (no main championship there). A <span class="plus"></span> yellow plus means a new region from an upcoming or ongoing championship, where you are registered or listed as delegate or organizer. It counts only when the hypothetical checkbox is on, and becomes a green dot once the championship is over. Hover or tap a dot to see the championships.</p>
 {{sections}}
 <div id="tip" popover></div>
 <script>
