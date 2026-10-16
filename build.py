@@ -5,6 +5,8 @@ import io
 import json
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from collections import defaultdict
@@ -22,6 +24,20 @@ def find_export_url():
     if not m:
         sys.exit("Could not find TSV export link")
     return m.group(0)
+
+
+def api(path):
+    """GET from the WCA API, politely: throttled, and retrying on rate limits."""
+    req = urllib.request.Request("https://www.worldcubeassociation.org/api/v0" + path,
+                                 headers={"User-Agent": "wca-goals (github.com/joeyday/wca-goals)"})
+    for attempt in range(6):
+        time.sleep(0.5)
+        try:
+            return json.load(urllib.request.urlopen(req, timeout=30))
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == 5:
+                raise
+            time.sleep(float(e.headers.get("Retry-After") or 5 * 2 ** attempt))
 
 
 def open_export(arg):
@@ -86,7 +102,7 @@ def main():
         comps[r["id"]] = {
             "id": r["id"], "name": r["name"], "region": region, "variant": variant,
             "main": variant not in ("Quiet", "PBQ", "FMC"),
-            "year": end.year, "state": r["city_name"].rsplit(", ", 1)[-1],
+            "year": end.year, "upcoming": end >= date.today(), "state": r["city_name"].rsplit(", ", 1)[-1],
             "legacy": region in legacy["regions"] and end.year <= last_year,
             "delegates": [d.strip() for d in DELEGATE_RE.findall(r["delegates"])],
         }
@@ -115,6 +131,23 @@ def main():
         if r["sub_id"] == "1":
             names[r["wca_id"]] = r["name"]
 
+    # Registrations aren't in the export, so ask the WCA API about upcoming championships.
+    # Failures just mean no yellow dots; they never break the build.
+    planned = defaultdict(set)  # wca_id -> upcoming competition ids
+    wca_ids = {}
+    for c in comps.values():
+        if not c["upcoming"]:
+            continue
+        try:
+            for reg in api(f"/competitions/{c['id']}/registrations"):
+                uid = reg["user_id"]
+                if uid not in wca_ids:
+                    wca_ids[uid] = api(f"/users/{uid}")["user"]["wca_id"]
+                if wca_ids[uid]:
+                    planned[wca_ids[uid]].add(c["id"])
+        except Exception as e:
+            print(f"Warning: could not load registrations for {c['id']}: {e}", file=sys.stderr)
+
     competed = defaultdict(set)  # person -> competition ids
     for r in rows(source, "WCA_export_results.tsv"):
         if r["competition_id"] in comps:
@@ -130,7 +163,7 @@ def main():
         for d in c["delegates"]:
             delegating[d].add(c["id"])
 
-    def board(people, main_only, mode):
+    def board(people, main_only, mode, hypo):
         out = []
         for key, ids in people.items():
             name, wca_id = (names.get(key, key), key) if people is competed else (key, ids_by_name.get(key))
@@ -147,7 +180,23 @@ def main():
                         has_current.add(t)
             if not by_region:
                 continue
-            out.append({"name": name, "wca_id": wca_id, "regions": set(by_region), "by_region": by_region,
+            plan, upcoming = defaultdict(list), []
+            for i in sorted(planned.get(key, ()) if people is competed else (), key=lambda i: comps[i]["name"]):
+                c = comps[i]
+                targets = credit(c, mode) if c["main"] or not main_only else []
+                upcoming.append((c, targets))
+                for t in targets:
+                    if t not in by_region:
+                        plan[t].append(c["name"])
+            if hypo:  # pretend every registration turns into an attendance
+                for c, targets in upcoming:
+                    total += bool(targets)
+                    for t in targets:
+                        by_region[t].append(c["name"])
+                        if c["main"]:
+                            has_main.add(t)
+                        has_current.add(t)
+            out.append({"name": name, "wca_id": wca_id, "regions": set(by_region), "by_region": by_region, "plan": plan,
                         "total": total, "variant_only": set(by_region) - has_main,
                         "legacy_only": (set(by_region) - has_current) if mode in STAR_MODES else set()})
         out.sort(key=lambda p: (-len(p["regions"]), -p["total"], p["name"]))
@@ -165,11 +214,12 @@ def main():
         for mode in MODES:
             used = {t for c in comps.values() for t in credit(c, mode)}
             cols = [r for r in order if r in used or (r in regions and mode != "pre")]
-            boards[f"{'all' if variants_on else 'main'}-{mode}"] = {
-                "regions": cols,
-                "Competitors": board(competed, not variants_on, mode),
-                "Delegates": board(delegating, not variants_on, mode),
-            }
+            for hypo in (False, True):
+                boards[f"{'all' if variants_on else 'main'}-{mode}-{'hypo' if hypo else 'now'}"] = {
+                    "regions": cols,
+                    "Competitors": board(competed, not variants_on, mode, hypo),
+                    "Delegates": board(delegating, not variants_on, mode, hypo),
+                }
     render(boards, config["me"], len(comps))
 
 
@@ -198,9 +248,15 @@ def render(boards, me, n_comps):
                + "<th>Total</th></tr></thead><tbody>"]
         for p in shown:
             cls = ' class="me"' if p["name"] == me else ""
-            cells = "".join(
-                f'<td class="r on" title="{html.escape(chr(10).join(p["by_region"][r]), quote=True)}"></td>'
-                if r in p["regions"] else '<td class="r"></td>' for r in regions)
+            def cell(r):
+                if r in p["plan"]:
+                    tip = "Registered, not yet attended:\n" + chr(10).join(p["plan"][r])
+                    return f'<td class="r plan" title="{html.escape(tip, quote=True)}"></td>'
+                if r in p["regions"]:
+                    return f'<td class="r on" title="{html.escape(chr(10).join(p["by_region"][r]), quote=True)}"></td>'
+                return '<td class="r"></td>'
+
+            cells = "".join(map(cell, regions))
             out.append(f'<tr{cls}><td>{p["rank"]}</td><td>{person(p)}</td>'
                        f'<td>{len(p["regions"])}{marks(p)}</td>{cells}<td>{p["total"]}</td></tr>')
         out.append("</tbody></table>")
@@ -223,7 +279,7 @@ def render(boards, me, n_comps):
     dist.mkdir(exist_ok=True)
     (dist / "index.html").write_text(page)
     for key, bs in boards.items():
-        if not key.startswith("all-"):
+        if not key.startswith("all-") or not key.endswith("-now"):
             continue
         for k in ("Competitors", "Delegates"):
             v = bs[k]

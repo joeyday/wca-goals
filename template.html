@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Regionals Goals</title>
 <style>
-  :root { --bg:#fff; --fg:#1a1a1a; --muted:#6b6b6b; --line:#e3e3e3; --on:#2e7d32; --hl:#fff6d6; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#161616; --fg:#eee; --muted:#9a9a9a; --line:#333; --on:#66bb6a; --hl:#3a3312; } }
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#6b6b6b; --line:#e3e3e3; --on:#2e7d32; --plan:#e0a800; --hl:#fff6d6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161616; --fg:#eee; --muted:#9a9a9a; --line:#333; --on:#66bb6a; --plan:#f2c230; --hl:#3a3312; } }
   body { background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,sans-serif; margin:0 auto; max-width:60rem; padding:1.5rem 1rem; }
   h1 { margin:0 0 .25rem; } h2 { margin-top:2rem; }
   .sub { color:var(--muted); font-size:.9rem; }
@@ -25,7 +25,8 @@
   .legend { margin:.5rem 0 0; } abbr { text-decoration:none; cursor:help; margin-left:.1rem; }
   #tip { margin:0; max-width:min(22rem, calc(100vw - 2rem)); padding:.5rem .75rem; border:1px solid var(--line); border-radius:.5rem;
          background:var(--bg); color:var(--fg); font-size:.9rem; white-space:pre-line; box-shadow:0 4px 16px rgb(0 0 0 / .2); }
-  td.r.on, abbr { cursor:pointer; }
+  td.r.plan::before { content:"●"; color:var(--plan); }
+  td.r.on, td.r.plan, abbr { cursor:pointer; }
 </style>
 </head>
 <body>
@@ -33,29 +34,32 @@
 <p class="sub">Progress toward all nine CubingUSA regional championships, as competitor and as listed delegate. Each distinct region is a point. In 2023 the Northeast region split into New England and Mid-Atlantic, and the original Western region split into Western and Rocky Mountain; choose how those older championships count below. {{count}} championships tracked. Updated {{updated}}.</p>
 <div class="toggles">
   <label class="toggle"><input type="checkbox" id="variants" checked> Include Quiet/PBQ &amp; FMC championships</label>
+  <label class="toggle"><input type="checkbox" id="hypo"> Hypothetical: count registered upcoming championships</label>
   <label class="toggle">Legacy regions: <select id="legacy">{{options}}</select></label>
 </div>
 {{hints}}
-<p class="sub legend"><b>*</b> counts a region only through a pre-2023 Northeast/Western championship &nbsp;·&nbsp; <b>†</b> counts a region only through a Quiet/PBQ/FMC championship (no main championship there). Hover a dot to see the championships.</p>
+<p class="sub legend"><b>*</b> counts a region only through a pre-2023 Northeast/Western championship &nbsp;·&nbsp; <b>†</b> counts a region only through a Quiet/PBQ/FMC championship (no main championship there). A <span style="color:var(--plan)">●</span> yellow dot means registered for an upcoming championship in a region that would be new. Hover or tap a dot to see the championships.</p>
 {{sections}}
 <div id="tip" popover></div>
 <script>
   const variants = document.getElementById("variants");
   const legacy = document.getElementById("legacy");
+  const hypo = document.getElementById("hypo");
   const apply = () => {
-    const key = (variants.checked ? "all" : "main") + "-" + legacy.value;
+    const key = (variants.checked ? "all" : "main") + "-" + legacy.value + "-" + (hypo.checked ? "hypo" : "now");
     document.querySelectorAll(".view").forEach(el => el.hidden = el.dataset.key !== key);
     document.querySelectorAll(".hint").forEach(el => el.hidden = el.dataset.mode !== legacy.value);
   };
   variants.addEventListener("change", apply);
   legacy.addEventListener("change", apply);
+  hypo.addEventListener("change", apply);
   apply();
 
   // Touch screens have no hover, so show the title text in a popover on tap.
   const tip = document.getElementById("tip");
   if (tip.showPopover && matchMedia("(hover: none)").matches) {
     document.addEventListener("click", e => {
-      const el = e.target.closest("td.r.on[title], abbr[title]");
+      const el = e.target.closest("td.r.on[title], td.r.plan[title], abbr[title]");
       if (!el) return;
       tip.textContent = el.title;
       tip.showPopover();
