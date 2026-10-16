@@ -1,0 +1,15 @@
+{
+  "me": "Joey Day",
+  "regions": [
+    "Great Lakes",
+    "Heartland",
+    "Mid-Atlantic",
+    "New England",
+    "Northwest",
+    "Rocky Mountain",
+    "Southeast",
+    "Southern",
+    "Western"
+  ],
+  "bonus_regions": ["Northeast"]
+}
