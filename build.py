@@ -179,9 +179,10 @@ def main():
         for key, ids in people.items():
             name, wca_id = (names.get(key, key), key) if role == "Competitors" else (key, ids_by_name.get(key))
             by_region, has_main, has_current, total = defaultdict(list), set(), set(), 0
-            done, pending = set(), defaultdict(list)  # delegates: regions finished vs still upcoming/ongoing
             for i in sorted(ids, key=lambda i: (comps[i]["year"], comps[i]["name"])):
                 c = comps[i]
+                if role != "Competitors" and c["upcoming"]:
+                    continue  # listings for championships that aren't over yet only count when hypothetical
                 targets = credit(c, mode) if c["main"] or not main_only else []
                 total += bool(targets)
                 for t in targets:
@@ -190,21 +191,18 @@ def main():
                         has_main.add(t)
                     if not c["legacy"]:
                         has_current.add(t)
-                    if role != "Competitors":
-                        (pending[t].append(c["name"]) if c["upcoming"] else done.add(t))
             if not by_region:
                 continue
             plan, upcoming = defaultdict(list), []
-            for i in sorted(planned.get(key, ()) if role == "Competitors" else (), key=lambda i: comps[i]["name"]):
+            future = planned.get(key, ()) if role == "Competitors" else [i for i in ids if comps[i]["upcoming"]]
+            for i in sorted(future, key=lambda i: comps[i]["name"]):
                 c = comps[i]
                 targets = credit(c, mode) if c["main"] or not main_only else []
                 upcoming.append((c, targets))
                 for t in targets:
                     if t not in by_region:
                         plan[t].append(c["name"])
-            if role != "Competitors":  # a listing counts right away, but shows yellow until the competition is over
-                plan.update({t: n for t, n in pending.items() if t not in done})
-            if hypo:  # pretend every registration turns into an attendance
+            if hypo:  # pretend every registration or listing for an unfinished championship counts
                 for c, targets in upcoming:
                     total += bool(targets)
                     for t in targets:
