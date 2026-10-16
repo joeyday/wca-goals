@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 EXPORT_PAGE = "https://www.worldcubeassociation.org/export/results"
-DELEGATE_RE = re.compile(r"\[\{([^}]*)\}")
+LISTED_RE = re.compile(r"\[\{([^}]*)\}")
 
 
 def find_export_url():
@@ -75,6 +75,7 @@ MODES = {
     "post": ("2023+ map only",
              "Only championships from 2023 on, under today's nine regions."),
 }
+ROLES = ("Competitors", "Delegates", "Organizers")
 STAR_MODES = {"bonus", "both", "location"}
 
 
@@ -104,7 +105,8 @@ def main():
             "main": variant not in ("Quiet", "PBQ", "FMC"),
             "year": end.year, "upcoming": end >= date.today(), "state": r["city_name"].rsplit(", ", 1)[-1],
             "legacy": region in legacy["regions"] and end.year <= last_year,
-            "delegates": [d.strip() for d in DELEGATE_RE.findall(r["delegates"])],
+            "delegates": [d.strip() for d in LISTED_RE.findall(r["delegates"])],
+            "organizers": [d.strip() for d in LISTED_RE.findall(r["organizers"])],
         }
 
     def credit(c, mode):
@@ -134,11 +136,16 @@ def main():
     # Registrations aren't in the export, so ask the WCA API about upcoming championships.
     # Failures just mean no yellow dots; they never break the build.
     planned = defaultdict(set)  # wca_id -> upcoming competition ids
-    wca_ids = {}
+    wca_ids, api_delegate_ids = {}, {}
     for c in comps.values():
         if not c["upcoming"]:
             continue
         try:
+            # The export is a day old, so delegates added since then only show up in the API.
+            live = api(f"/competitions/{c['id']}")
+            c["delegates"] = [d["name"] for d in live["delegates"]]
+            c["organizers"] = [d["name"] for d in live["organizers"]]
+            api_delegate_ids.update({d["name"]: d["wca_id"] for d in live["delegates"] + live["organizers"] if d.get("wca_id")})
             for reg in api(f"/competitions/{c['id']}/registrations"):
                 uid = reg["user_id"]
                 if uid not in wca_ids:
@@ -157,17 +164,22 @@ def main():
     for wca_id, n in names.items():
         name_counts[n].append(wca_id)
     ids_by_name = {n: ids[0] for n, ids in name_counts.items() if len(ids) == 1}
+    ids_by_name.update(api_delegate_ids)
 
-    delegating = defaultdict(set)
+    delegating, organizing = defaultdict(set), defaultdict(set)
     for c in comps.values():
         for d in c["delegates"]:
             delegating[d].add(c["id"])
+        for o in c["organizers"]:
+            if o in ids_by_name:  # organizers can be groups ("Cube New England"); keep people only
+                organizing[o].add(c["id"])
 
-    def board(people, main_only, mode, hypo):
+    def board(role, people, main_only, mode, hypo):
         out = []
         for key, ids in people.items():
-            name, wca_id = (names.get(key, key), key) if people is competed else (key, ids_by_name.get(key))
+            name, wca_id = (names.get(key, key), key) if role == "Competitors" else (key, ids_by_name.get(key))
             by_region, has_main, has_current, total = defaultdict(list), set(), set(), 0
+            done, pending = set(), defaultdict(list)  # delegates: regions finished vs still upcoming/ongoing
             for i in sorted(ids, key=lambda i: (comps[i]["year"], comps[i]["name"])):
                 c = comps[i]
                 targets = credit(c, mode) if c["main"] or not main_only else []
@@ -178,16 +190,20 @@ def main():
                         has_main.add(t)
                     if not c["legacy"]:
                         has_current.add(t)
+                    if role != "Competitors":
+                        (pending[t].append(c["name"]) if c["upcoming"] else done.add(t))
             if not by_region:
                 continue
             plan, upcoming = defaultdict(list), []
-            for i in sorted(planned.get(key, ()) if people is competed else (), key=lambda i: comps[i]["name"]):
+            for i in sorted(planned.get(key, ()) if role == "Competitors" else (), key=lambda i: comps[i]["name"]):
                 c = comps[i]
                 targets = credit(c, mode) if c["main"] or not main_only else []
                 upcoming.append((c, targets))
                 for t in targets:
                     if t not in by_region:
                         plan[t].append(c["name"])
+            if role != "Competitors":  # a listing counts right away, but shows yellow until the competition is over
+                plan.update({t: n for t, n in pending.items() if t not in done})
             if hypo:  # pretend every registration turns into an attendance
                 for c, targets in upcoming:
                     total += bool(targets)
@@ -196,7 +212,7 @@ def main():
                         if c["main"]:
                             has_main.add(t)
                         has_current.add(t)
-            out.append({"name": name, "wca_id": wca_id, "regions": set(by_region), "by_region": by_region, "plan": plan,
+            out.append({"name": name, "wca_id": wca_id, "regions": set(by_region), "by_region": by_region, "plan": plan, "plan_label": ("Registered, not yet attended:" if role == "Competitors" else f"Listed {role[:-1].lower()}, not over yet:"),
                         "total": total, "variant_only": set(by_region) - has_main,
                         "legacy_only": (set(by_region) - has_current) if mode in STAR_MODES else set()})
         out.sort(key=lambda p: (-len(p["regions"]), -p["total"], p["name"]))
@@ -217,8 +233,8 @@ def main():
             for hypo in (False, True):
                 boards[f"{'all' if variants_on else 'main'}-{mode}-{'hypo' if hypo else 'now'}"] = {
                     "regions": cols,
-                    "Competitors": board(competed, not variants_on, mode, hypo),
-                    "Delegates": board(delegating, not variants_on, mode, hypo),
+                    **{role: board(role, people, not variants_on, mode, hypo) for role, people in
+                       (("Competitors", competed), ("Delegates", delegating), ("Organizers", organizing))},
                 }
     render(boards, config["me"], len(comps))
 
@@ -241,7 +257,8 @@ def render(boards, me, n_comps):
         return f'<a href="https://www.worldcubeassociation.org/persons/{p["wca_id"]}" target="_blank" rel="noopener">{name}</a>'
 
     def table(rows_, regions):
-        shown = [p for p in rows_ if len(p["regions"]) >= 3][:50]
+        floor = min(3, len(rows_[0]["regions"])) if rows_ else 3  # organizer boards top out below 3 regions
+        shown = [p for p in rows_ if len(p["regions"]) >= floor][:50]
         shown += [p for p in rows_ if p["name"] == me and p not in shown]
         out = ['<table><thead><tr><th>#</th><th>Name</th><th>Regions</th>'
                + "".join(f'<th class="r"><span>{html.escape(r)}</span></th>' for r in regions)
@@ -250,7 +267,7 @@ def render(boards, me, n_comps):
             cls = ' class="me"' if p["name"] == me else ""
             def cell(r):
                 if r in p["plan"]:
-                    tip = "Registered, not yet attended:\n" + chr(10).join(p["plan"][r])
+                    tip = p["plan_label"] + "\n" + chr(10).join(p["plan"][r])
                     return f'<td class="r plan" title="{html.escape(tip, quote=True)}"></td>'
                 if r in p["regions"]:
                     return f'<td class="r on" title="{html.escape(chr(10).join(p["by_region"][r]), quote=True)}"></td>'
@@ -265,7 +282,7 @@ def render(boards, me, n_comps):
     first = next(iter(boards))
     sections = "".join(
         f'<div class="view" data-key="{key}"{"" if key == first else " hidden"}>'
-        + "".join(f"<section><h2>{k}</h2>{table(bs[k], bs['regions'])}</section>" for k in ("Competitors", "Delegates"))
+        + "".join(f"<section><h2>{k}</h2>{table(bs[k], bs['regions'])}</section>" for k in ROLES)
         + "</div>"
         for key, bs in boards.items())
     options = "".join(f'<option value="{k}">{html.escape(label)}</option>' for k, (label, _) in MODES.items())
@@ -281,7 +298,7 @@ def render(boards, me, n_comps):
     for key, bs in boards.items():
         if not key.startswith("all-") or not key.endswith("-now"):
             continue
-        for k in ("Competitors", "Delegates"):
+        for k in ROLES:
             v = bs[k]
             print(f"\n{key} / {k} ({len(bs['regions'])} regions):", file=sys.stderr)
             for p in v[:3]:
