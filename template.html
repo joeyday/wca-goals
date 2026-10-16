@@ -23,6 +23,9 @@
   td a { color:inherit; text-decoration-color:var(--line); } td a:hover { text-decoration-color:currentColor; }
   .toggles { display:flex; flex-wrap:wrap; gap:.25rem 1.5rem; }
   .legend { margin:.5rem 0 0; } abbr { text-decoration:none; cursor:help; margin-left:.1rem; }
+  #tip { margin:0; max-width:min(22rem, calc(100vw - 2rem)); padding:.5rem .75rem; border:1px solid var(--line); border-radius:.5rem;
+         background:var(--bg); color:var(--fg); font-size:.9rem; white-space:pre-line; box-shadow:0 4px 16px rgb(0 0 0 / .2); }
+  td.r.on, abbr { cursor:pointer; }
 </style>
 </head>
 <body>
@@ -35,6 +38,7 @@
 {{hints}}
 <p class="sub legend"><b>*</b> counts a region only through a pre-2023 Northeast/Western championship &nbsp;·&nbsp; <b>†</b> counts a region only through a Quiet/PBQ/FMC championship (no main championship there). Hover a dot to see the championships.</p>
 {{sections}}
+<div id="tip" popover></div>
 <script>
   const variants = document.getElementById("variants");
   const legacy = document.getElementById("legacy");
@@ -46,6 +50,20 @@
   variants.addEventListener("change", apply);
   legacy.addEventListener("change", apply);
   apply();
+
+  // Touch screens have no hover, so show the title text in a popover on tap.
+  const tip = document.getElementById("tip");
+  if (tip.showPopover && matchMedia("(hover: none)").matches) {
+    document.addEventListener("click", e => {
+      const el = e.target.closest("td.r.on[title], abbr[title]");
+      if (!el) return;
+      tip.textContent = el.title;
+      tip.showPopover();
+      const r = el.getBoundingClientRect(), w = tip.offsetWidth;
+      tip.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 8)) + "px";
+      tip.style.top = r.bottom + 6 + "px";
+    });
+  }
 </script>
 </body>
 </html>
