@@ -39,9 +39,7 @@
   const boxes = { v: document.getElementById("variants"), n: document.getElementById("northeast") };
   const apply = () => {
     document.body.dataset.mode = "v" + +boxes.v.checked + "n" + +boxes.n.checked;
-    try { localStorage.setItem("wca-v", +boxes.v.checked); } catch (e) {}
   };
-  try { if (localStorage.getItem("wca-v") === "0") boxes.v.checked = false; } catch (e) {}
   for (const k in boxes) boxes[k].addEventListener("change", apply);
   apply();
 </script>
