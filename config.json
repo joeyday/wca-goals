@@ -11,5 +11,39 @@
     "Southern",
     "Western"
   ],
-  "bonus_regions": ["Northeast"]
+  "legacy": {
+    "last_year": 2022,
+    "regions": {
+      "Northeast": {
+        "label": "Northeast",
+        "by_state": {
+          "Connecticut": "New England",
+          "Massachusetts": "New England",
+          "Rhode Island": "New England",
+          "Maine": "New England",
+          "New Hampshire": "New England",
+          "Vermont": "New England",
+          "New York": "Mid-Atlantic",
+          "New Jersey": "Mid-Atlantic",
+          "Pennsylvania": "Mid-Atlantic",
+          "Delaware": "Mid-Atlantic",
+          "Maryland": "Mid-Atlantic",
+          "Virginia": "Mid-Atlantic"
+        }
+      },
+      "Western": {
+        "label": "Western (original)",
+        "by_state": {
+          "California": "Western",
+          "Nevada": "Western",
+          "Hawaii": "Western",
+          "Utah": "Rocky Mountain",
+          "Colorado": "Rocky Mountain",
+          "Arizona": "Rocky Mountain",
+          "New Mexico": "Rocky Mountain",
+          "Wyoming": "Rocky Mountain"
+        }
+      }
+    }
+  }
 }

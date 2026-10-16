@@ -44,14 +44,35 @@ def rows(source, name):
             yield dict(zip(header, line.rstrip("\n").split("\t")))
 
 
+# How legacy (pre-2023) championships are credited. See config.json "legacy".
+MODES = {
+    "current": ("Current regions only",
+                "Only the nine current regions. Northeast and pre-2023 Western championships are ignored."),
+    "bonus": ("Legacy regions as bonus points",
+              "Northeast and the original Western each count as an extra region (11 in total)."),
+    "both": ("Credit both successor regions",
+             "A Northeast championship counts for New England and Mid-Atlantic. An original Western championship counts for Western and Rocky Mountain."),
+    "location": ("Credit by location",
+                 "Each Northeast or original Western championship counts only for the current region its host state belongs to."),
+    "pre": ("Pre-2023 map only",
+            "Only championships through 2022, under the seven regions of the time."),
+    "post": ("2023+ map only",
+             "Only championships from 2023 on, under today's nine regions."),
+}
+STAR_MODES = {"bonus", "both", "location"}
+
+
 def main():
     config = json.loads((ROOT / "config.json").read_text())
-    regions = config["regions"] + config["bonus_regions"]
+    regions = config["regions"]
+    legacy = config["legacy"]
+    last_year = legacy["last_year"]
+    legacy_labels = [v["label"] for v in legacy["regions"].values()]
     source = open_export(sys.argv[1] if len(sys.argv) > 1 else None)
 
     # Regional championships, detected by name (the WCA export has no flag for them).
-    region_re = re.compile(r"\b(%s) (?:(Quiet|PBQ|FMC|Speedcubing) )?(?:Championships?|All-?Stars) (?:- .*)?\d{4}$"
-                           % "|".join(map(re.escape, regions)))
+    names_re = "|".join(map(re.escape, regions + list(legacy["regions"])))
+    region_re = re.compile(r"\b(%s) (?:(Quiet|PBQ|FMC|Speedcubing) )?(?:Championships?|All-?Stars) (?:- .*)?\d{4}$" % names_re)
     comps = {}
     for r in rows(source, "WCA_export_competitions.tsv"):
         if r["country_id"] != "USA" or r["cancelled"] == "1":
@@ -65,9 +86,29 @@ def main():
         comps[r["id"]] = {
             "id": r["id"], "name": r["name"], "region": region, "variant": variant,
             "main": variant not in ("Quiet", "PBQ", "FMC"),
-            "year": end.year, "ended": end <= date.today(),
+            "year": end.year, "state": r["city_name"].rsplit(", ", 1)[-1],
+            "legacy": region in legacy["regions"] and end.year <= last_year,
             "delegates": [d.strip() for d in DELEGATE_RE.findall(r["delegates"])],
         }
+
+    def credit(c, mode):
+        """Regions a championship counts toward under a mode (empty list = not counted)."""
+        old = legacy["regions"].get(c["region"]) if c["legacy"] else None
+        if mode == "post":
+            return [c["region"]] if c["year"] > last_year else []
+        if mode == "pre":
+            return [c["region"]] if c["year"] <= last_year else []
+        if not old:
+            return [c["region"]]
+        if mode == "current":
+            return []
+        if mode == "bonus":
+            return [old["label"]]
+        if mode == "both":
+            return sorted(set(old["by_state"].values()))
+        if c["state"] not in old["by_state"]:
+            sys.exit(f"No region mapping for {c['state']!r} ({c['name']}); add it to config.json")
+        return [old["by_state"][c["state"]]]
 
     names = {}
     for r in rows(source, "WCA_export_persons.tsv"):
@@ -89,20 +130,26 @@ def main():
         for d in c["delegates"]:
             delegating[d].add(c["id"])
 
-    def board(people, main_only, bonus_on):
+    def board(people, main_only, mode):
         out = []
         for key, ids in people.items():
             name, wca_id = (names.get(key, key), key) if people is competed else (key, ids_by_name.get(key))
-            ids = [i for i in ids if (comps[i]["main"] or not main_only)
-                   and (bonus_on or comps[i]["region"] not in bonus)]
-            if not ids:
-                continue
-            by_region = defaultdict(list)
+            by_region, has_main, has_current, total = defaultdict(list), set(), set(), 0
             for i in sorted(ids, key=lambda i: (comps[i]["year"], comps[i]["name"])):
-                by_region[comps[i]["region"]].append(comps[i]["name"])
-            has_main = {comps[i]["region"] for i in ids if comps[i]["main"]}
-            out.append({"name": name, "wca_id": wca_id, "regions": set(by_region), "by_region": by_region, "total": len(ids),
-                        "variant_only": set(by_region) - has_main})
+                c = comps[i]
+                targets = credit(c, mode) if c["main"] or not main_only else []
+                total += bool(targets)
+                for t in targets:
+                    by_region[t].append(c["name"])
+                    if c["main"]:
+                        has_main.add(t)
+                    if not c["legacy"]:
+                        has_current.add(t)
+            if not by_region:
+                continue
+            out.append({"name": name, "wca_id": wca_id, "regions": set(by_region), "by_region": by_region,
+                        "total": total, "variant_only": set(by_region) - has_main,
+                        "legacy_only": (set(by_region) - has_current) if mode in STAR_MODES else set()})
         out.sort(key=lambda p: (-len(p["regions"]), -p["total"], p["name"]))
         rank, prev = 0, None
         for i, p in enumerate(out, 1):
@@ -112,23 +159,26 @@ def main():
             p["rank"] = rank
         return out
 
-    bonus = set(config["bonus_regions"])
-    boards = {
-        f"v{int(variants_on)}n{int(bonus_on)}": {
-            "regions": [r for r in regions if bonus_on or r not in bonus],
-            "Competitors": board(competed, not variants_on, bonus_on),
-            "Delegates": board(delegating, not variants_on, bonus_on),
-        }
-        for variants_on in (True, False) for bonus_on in (True, False)
-    }
-    render(boards, bonus, config["me"], len(comps))
+    order = regions + legacy_labels
+    boards = {}
+    for variants_on in (True, False):
+        for mode in MODES:
+            used = {t for c in comps.values() for t in credit(c, mode)}
+            cols = [r for r in order if r in used or (r in regions and mode != "pre")]
+            boards[f"{'all' if variants_on else 'main'}-{mode}"] = {
+                "regions": cols,
+                "Competitors": board(competed, not variants_on, mode),
+                "Delegates": board(delegating, not variants_on, mode),
+            }
+    render(boards, config["me"], len(comps))
 
 
-def render(boards, bonus, me, n_comps):
+def render(boards, me, n_comps):
     def marks(p):
         out = ""
-        if bonus & p["regions"]:
-            out += '<abbr title="Includes the Northeast bonus point">*</abbr>'
+        if p["legacy_only"]:
+            only = ", ".join(sorted(p["legacy_only"]))
+            out += f'<abbr title="Counts a region only through a pre-2023 Northeast/Western championship: {html.escape(only)}">*</abbr>'
         if p["variant_only"]:
             only = ", ".join(sorted(p["variant_only"]))
             out += f'<abbr title="Relies on a Quiet/PBQ/FMC championship, with no main championship, in: {html.escape(only)}">†</abbr>'
@@ -156,27 +206,34 @@ def render(boards, bonus, me, n_comps):
         out.append("</tbody></table>")
         return "".join(out)
 
+    first = next(iter(boards))
     sections = "".join(
-        f'<div class="mode mode-{mode}">'
+        f'<div class="view" data-key="{key}"{"" if key == first else " hidden"}>'
         + "".join(f"<section><h2>{k}</h2>{table(bs[k], bs['regions'])}</section>" for k in ("Competitors", "Delegates"))
         + "</div>"
-        for mode, bs in boards.items())
+        for key, bs in boards.items())
+    options = "".join(f'<option value="{k}">{html.escape(label)}</option>' for k, (label, _) in MODES.items())
+    hints = "".join(f'<p class="sub hint" data-mode="{k}"{"" if k == "current" else " hidden"}>{html.escape(h)}</p>'
+                    for k, (_, h) in MODES.items())
     page = (ROOT / "template.html").read_text()
-    page = (page.replace("{{sections}}", sections)
+    page = (page.replace("{{sections}}", sections).replace("{{options}}", options).replace("{{hints}}", hints)
             .replace("{{updated}}", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
             .replace("{{count}}", str(n_comps)))
     dist = ROOT / "dist"
     dist.mkdir(exist_ok=True)
     (dist / "index.html").write_text(page)
-    for mode, bs in boards.items():
+    for key, bs in boards.items():
+        if not key.startswith("all-"):
+            continue
         for k in ("Competitors", "Delegates"):
             v = bs[k]
-            print(f"\n{mode} / {k}:", file=sys.stderr)
+            print(f"\n{key} / {k} ({len(bs['regions'])} regions):", file=sys.stderr)
             for p in v[:3]:
-                print(f"  {p['rank']:>3} {p['name']:<24} {len(p['regions'])}{'*' if bonus & p['regions'] else ''}{'†' if p['variant_only'] else ''} total {p['total']}", file=sys.stderr)
+                print(f"  {p['rank']:>3} {p['name']:<24} {len(p['regions'])}{'*' if p['legacy_only'] else ''}{'†' if p['variant_only'] else ''} total {p['total']}", file=sys.stderr)
             me_row = next((p for p in v if p["name"] == me), None)
             if me_row:
-                print(f"  me: {me_row['rank']} {len(me_row['regions'])}{'†' if me_row['variant_only'] else ''}", file=sys.stderr)
+                print(f"  me: {me_row['rank']} {len(me_row['regions'])}{'*' if me_row['legacy_only'] else ''}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()
