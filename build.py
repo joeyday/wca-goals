@@ -78,7 +78,11 @@ def main():
     for r in rows(source, "WCA_export_results.tsv"):
         if r["competition_id"] in comps:
             competed[r["person_id"]].add(r["competition_id"])
-    competitors = {names.get(p, p): c for p, c in competed.items()}
+    # Delegates are listed by name only, so link them only when the name is unambiguous.
+    name_counts = defaultdict(list)
+    for wca_id, n in names.items():
+        name_counts[n].append(wca_id)
+    ids_by_name = {n: ids[0] for n, ids in name_counts.items() if len(ids) == 1}
 
     delegating = defaultdict(set)
     for c in comps.values():
@@ -87,7 +91,8 @@ def main():
 
     def board(people, main_only, bonus_on):
         out = []
-        for name, ids in people.items():
+        for key, ids in people.items():
+            name, wca_id = (names.get(key, key), key) if people is competed else (key, ids_by_name.get(key))
             ids = [i for i in ids if (comps[i]["main"] or not main_only)
                    and (bonus_on or comps[i]["region"] not in bonus)]
             if not ids:
@@ -96,7 +101,7 @@ def main():
             for i in sorted(ids, key=lambda i: (comps[i]["year"], comps[i]["name"])):
                 by_region[comps[i]["region"]].append(comps[i]["name"])
             has_main = {comps[i]["region"] for i in ids if comps[i]["main"]}
-            out.append({"name": name, "regions": set(by_region), "by_region": by_region, "total": len(ids),
+            out.append({"name": name, "wca_id": wca_id, "regions": set(by_region), "by_region": by_region, "total": len(ids),
                         "variant_only": set(by_region) - has_main})
         out.sort(key=lambda p: (-len(p["regions"]), -p["total"], p["name"]))
         rank, prev = 0, None
@@ -111,7 +116,7 @@ def main():
     boards = {
         f"v{int(variants_on)}n{int(bonus_on)}": {
             "regions": [r for r in regions if bonus_on or r not in bonus],
-            "Competitors": board(competitors, not variants_on, bonus_on),
+            "Competitors": board(competed, not variants_on, bonus_on),
             "Delegates": board(delegating, not variants_on, bonus_on),
         }
         for variants_on in (True, False) for bonus_on in (True, False)
@@ -129,6 +134,12 @@ def render(boards, bonus, me, n_comps):
             out += f'<abbr title="Relies on a Quiet/PBQ/FMC championship, with no main championship, in: {html.escape(only)}">†</abbr>'
         return out
 
+    def person(p):
+        name = html.escape(p["name"])
+        if not p["wca_id"]:
+            return name
+        return f'<a href="https://www.worldcubeassociation.org/persons/{p["wca_id"]}" target="_blank" rel="noopener">{name}</a>'
+
     def table(rows_, regions):
         shown = [p for p in rows_ if len(p["regions"]) >= 3][:50]
         shown += [p for p in rows_ if p["name"] == me and p not in shown]
@@ -140,7 +151,7 @@ def render(boards, bonus, me, n_comps):
             cells = "".join(
                 f'<td class="r on" title="{html.escape(chr(10).join(p["by_region"][r]), quote=True)}"></td>'
                 if r in p["regions"] else '<td class="r"></td>' for r in regions)
-            out.append(f'<tr{cls}><td>{p["rank"]}</td><td>{html.escape(p["name"])}</td>'
+            out.append(f'<tr{cls}><td>{p["rank"]}</td><td>{person(p)}</td>'
                        f'<td>{len(p["regions"])}{marks(p)}</td>{cells}<td>{p["total"]}</td></tr>')
         out.append("</tbody></table>")
         return "".join(out)
