@@ -62,20 +62,21 @@ def rows(source, name):
 
 # How legacy (pre-2023) championships are credited. See config.json "legacy".
 MODES = {
+    "location": ("Credit by location",
+                 "Each Northeast or original Western championship counts only for the current region its host state belongs to."),
     "current": ("Current regions only",
                 "Only the nine current regions. Northeast and pre-2023 Western championships are ignored."),
     "bonus": ("Legacy regions as bonus points",
               "Northeast and the original Western each count as an extra region (11 in total)."),
     "both": ("Credit both successor regions",
              "A Northeast championship counts for New England and Mid-Atlantic. An original Western championship counts for Western and Rocky Mountain."),
-    "location": ("Credit by location",
-                 "Each Northeast or original Western championship counts only for the current region its host state belongs to."),
     "pre": ("Pre-2023 map only",
             "Only championships through 2022, under the seven regions of the time."),
     "post": ("2023+ map only",
              "Only championships from 2023 on, under today's nine regions."),
 }
 ROLES = ("Competitors", "Delegates", "Organizers")
+DEFAULT_MODE = next(iter(MODES))
 STAR_MODES = {"bonus", "both", "location"}
 
 
@@ -284,7 +285,7 @@ def render(boards, me, n_comps):
         + "</div>"
         for key, bs in boards.items())
     options = "".join(f'<option value="{k}">{html.escape(label)}</option>' for k, (label, _) in MODES.items())
-    hints = "".join(f'<p class="sub hint" data-mode="{k}"{"" if k == "current" else " hidden"}>{html.escape(h)}</p>'
+    hints = "".join(f'<p class="sub hint" data-mode="{k}"{"" if k == DEFAULT_MODE else " hidden"}>{html.escape(h)}</p>'
                     for k, (_, h) in MODES.items())
     page = (ROOT / "template.html").read_text()
     page = (page.replace("{{sections}}", sections).replace("{{options}}", options).replace("{{hints}}", hints)
